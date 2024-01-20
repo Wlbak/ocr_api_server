@@ -2,7 +2,7 @@
 import argparse
 import base64
 import json
-
+import cv2
 import ddddocr
 from flask import Flask, request
 
@@ -66,7 +66,7 @@ server = Server(ocr=args.ocr, det=args.det, old=args.old)
 
 def get_img(request, img_type='file', img_name='image'):
     if img_type == 'b64':
-        img = base64.b64decode(request.get_data()) # 
+        img = base64.b64decode(request.get_data()) #
         try: # json str of multiple images
             dic = json.loads(img)
             img = base64.b64decode(dic.get(img_name).encode())
@@ -90,6 +90,38 @@ def set_ret(result, ret_type='text'):
         else:
             return str(result).strip()
 
+
+def show(name):
+	'''展示圈出来的位置'''
+	cv2.imshow('Show', name)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()
+
+
+def _tran_canny(image):
+	"""消除噪声"""
+	image = cv2.GaussianBlur(image, (3, 3), 0)
+	return cv2.Canny(image, 50, 150)
+
+
+def detect_displacement(img_slider_path, image_background_path):
+	"""detect displacement"""
+	# # 参数0是灰度模式
+	image = cv2.imread(img_slider_path, 0)
+	template = cv2.imread(image_background_path, 0)
+	
+	# 寻找最佳匹配
+	res = cv2.matchTemplate(_tran_canny(image), _tran_canny(template), cv2.TM_CCOEFF_NORMED)
+	# 最小值,最大值,并得到最小值, 最大值的索引
+	min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+	top_left = max_loc[0]  # 横坐标
+	# 展示圈出来的区域
+	x, y = max_loc  # 获取x,y位置坐标
+	
+	w, h = image.shape[::-1]  # 宽高
+	cv2.rectangle(template, (x, y), (x + w, y + h), (7, 249, 151), 2)
+	# show(template)
+	return top_left
 
 @app.route('/<opt>/<img_type>', methods=['POST'])
 @app.route('/<opt>/<img_type>/<ret_type>', methods=['POST'])
@@ -121,6 +153,19 @@ def slide(algo_type='compare', img_type='file', ret_type='text'):
 def ping():
     return "pong"
 
+@app.route('/cv2/<img_type>', methods=['POST'])
+def pass_captcha(img_type='file', ret_type='text'):
+	try:
+		target_img = get_img(request, img_type, 'target_img')
+		bg_img = get_img(request, img_type, 'bg_img')
+		with open('background.png', 'wb') as f:
+			f.write(bg_img)
+		with open('target.png', 'wb') as f:
+			f.write(target_img)
+		top_left = detect_displacement("target.png", "background.png")
+		return set_ret(top_left, ret_type)
+	except Exception as e:
+		return set_ret(e, ret_type)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=args.port)
